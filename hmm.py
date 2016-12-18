@@ -242,11 +242,50 @@ class HiddenMarkovModel(object):
         self.transit_matrix = None
         self.observation_matrix = None
         self.init_prob = None
-        self.n_states = 0
-        self.n_observations = 0
         self.states_space = None
         self.observations_space = None
         self.max_iters = max_iters
+
+    @property
+    def n_states(self):
+        """total number of unique states"""
+        cands = [self.transit_matrix, self.init_prob, self.states_space]
+        for i in xrange(len(cands)):
+            if cands[i] is not None:
+                if i <= 1:
+                    return cands[i].shape[0]
+                else:
+                    return cands[i].size()
+        return 0
+
+    @property
+    def n_observations(self):
+        """total number of unique observations"""
+        cands = [self.observation_matrix, self.observations_space]
+        for i in xrange(len(cands)):
+            if cands[i] is not None:
+                if i == 0:
+                    return cands[i].shape[0]
+                else:
+                    return cands[i].size()
+        return 0
+
+    def _check_probabilities(self):
+        """check if transit_matrix, observation_matrix and init_prob
+        are not None and consistent
+
+        Returns
+        -------
+        is_consistent : boolean; True if transit_matrix, 
+            observation_matrix and init_prob are not None and consistent 
+        """
+        A, B, pi = self.transit_matrix, self.observation_matrix, self.init_prob
+        if A is not None and B is not None and pi is not None and \
+           A.shape[0] == B.shape[0] == pi.shape[0]:
+            return True
+
+        raise ValueError("inconsistent or empty paramters among transit matrix,"
+                        " observation matrix and initiate probability.")
 
     def _normalize_by_column(self, A):
         """normailize matrix by its column sum:
@@ -303,7 +342,24 @@ class HiddenMarkovModel(object):
             try:
                 setattr(self, key, value)
             except AttributeError:
-                raise AttributeError("Invalid paramter %s for estimator %s.".format(key, self.__class__.__name__))
+                raise AttributeError("Invalid paramter {0} for estimator {1}.".format(key, self.__class__.__name__))
+
+        n_states, n_observations = [], []
+        if "init_prob" in params:
+            n_states.append(params["init_prob"].shape[0])
+        if "transit_matrix" in params:
+            n_states.append(params["transit_matrix"].shape[0])
+        if "states_space" in params:
+            n_states.append(params["states_space"].size())
+
+        if "observation_matrix" in params:
+            n_observations.append(params["observation_matrix"].shape[1])
+        if "observations_space" in params:
+            n_observations.append(params["observations_space"].size())
+
+        if len(set(n_states)) > 1 or len(set(n_observations)) > 1:
+            raise ValueError("Inconsistent shape of input")
+
         return self
 
     def _get_seq_indice(self, seq, mode='state', check_input=True, accept_invalid=False):
@@ -401,16 +457,17 @@ class HiddenMarkovModel(object):
 
         unique_obs, obs_ids = np.unique(obs, return_inverse=True)
         self.observations_space = TwoEndedIndex(unique_obs)
-        self.n_observations = unique_obs.shape[0]
-        
+        n_observations = self.n_observations
+
         if states is None:
-            if self.n_states == 0 or self.states_space is None:
+            n_states = self.n_states
+            if n_states == 0:
                 raise ValueError("States must be specified if no states data provided.")
 
             indice = self._get_seq_indice(obs, mode='observation', check_input=False)
-            A = np.random.rand(self.n_states, self.n_states)
-            B = np.random.rand(self.n_states, self.n_observations)
-            pi = np.random.rand(self.n_states, )
+            A = np.random.rand(n_states, n_states)
+            B = np.random.rand(n_states, n_observations)
+            pi = np.random.rand(n_states, )
 
             A = self._normalize_by_column(A)
             B = self._normalize_by_column(B)
@@ -425,7 +482,7 @@ class HiddenMarkovModel(object):
                 p_backward = self._cal_backward_proba(indice, None, check_input=False)
 
                 tmp = p_forward * p_backward
-                p_state = tmp / np.sum(tmp, axis=0)
+                p_state = self._normalize_by_row(tmp)
 
                 p_transit = np.zeros((self.n_states, self.n_states))
                 for i in xrange(T-1):
@@ -434,7 +491,7 @@ class HiddenMarkovModel(object):
                     p_transit += self._normalize_by_row(tmp)
 
                 A = div0(p_transit, np.sum(p_state[:, :-1], axis=1)[:, None])
-                B = np.zeros((self.n_states, self.n_observations))
+                B = np.zeros((n_states, n_observations))
                 for i in xrange(T):
                     j = obs_ids[i]
                     B[:, j] += p_state[:, j]
@@ -460,16 +517,16 @@ class HiddenMarkovModel(object):
 
             self.init_prob = states_count / T
             self.states_space = TwoEndedIndex(unique_states)
-            self.n_states = unique_states.shape[0]
+            n_states = self.n_states
             
-            A = np.zeros((self.n_states, self.n_states), dtype=np.int32)
+            A = np.zeros((n_states, n_states), dtype=np.int32)
             for t in xrange(T-1):
                 i, j = state_ids[t], state_ids[t+1]
                 A[i, j] += 1
             # print A
             self.transit_matrix = self._normalize_by_column(A)
 
-            B = np.zeros((self.n_states, self.n_observations), dtype=np.int32)
+            B = np.zeros((n_states, n_observations), dtype=np.int32)
             for t in xrange(T):
                 i, k = state_ids[t], obs_ids[t]
                 B[i, k] += 1
@@ -492,23 +549,26 @@ class HiddenMarkovModel(object):
             predicted states sequence
         """
         obs = check_1d_array(obs)
-        # check (A, B, pi)
+        self._check_probabilities()
 
         T = obs.shape[0]
         A, B, pi = self.transit_matrix, self.observation_matrix, self.init_prob
         indice = self._get_seq_indice(obs, mode='observation', accept_invalid=True)
-        default_obs_prob = 1 / self.n_observations
+        n_observations = self.n_observations
+        n_states = self.n_states
+
+        default_obs_prob = 1 / n_observations
 
         pred_indice = np.empty((T, ), dtype=np.int32)
         
         delta = pi * default_obs_prob if indice[0] == -1 else pi * B[:, indice[0]]
-        phi = np.empty((T, self.n_states), dtype=np.int32)
+        phi = np.empty((T, n_states), dtype=np.int32)
 
         for i in xrange(1, T):
             o = indice[i]
             tmp = delta[:, None] * A
             phi[i-1] = np.argmax(tmp, axis=0)
-            for j in xrange(self.n_states):
+            for j in xrange(n_states):
                 k = phi[i-1,j]
                 delta[j] = tmp[k, j] * B[j,o]
 
@@ -532,7 +592,7 @@ class HiddenMarkovModel(object):
             generated observations sequence
         """
 
-        # check (A, B, pi)
+        self._check_probabilities()
         if T < 0:
             raise ValueError("bad input sequence lenght {0}.".format(T))
         
@@ -540,9 +600,6 @@ class HiddenMarkovModel(object):
         obs = np.empty((T,), dtype=np.string_)
         i = np.random.choice(self.states_space.all_values(), 1, p=pi)[0]
         for t in xrange(T):
-            print self.observations_space.all_keys()
-            print i
-            print B[i].shape
             obs[t] = np.random.choice(self.observations_space.all_keys(), 1, p=B[i])[0]
             i = np.random.choice(self.states_space.all_values(), 1, p=A[i,:])[0]
         return obs
@@ -584,7 +641,7 @@ class HiddenMarkovModel(object):
         if check_input:
             indice = check_1d_array(indice)
         end = indice.shape[0]
-        # check (A,B,pi)
+        self._check_probabilities()
 
         A = self.transit_matrix
         B = self.observation_matrix
@@ -641,7 +698,7 @@ class HiddenMarkovModel(object):
             indice = check_1d_array(indice)
         end = indice.shape[0]
 
-        # check (A,B,pi)
+        self._check_probabilities()
         A = self.transit_matrix
         B = self.observation_matrix
         pi = self.init_prob
@@ -748,12 +805,13 @@ class HiddenMarkovModel(object):
 
         A, B = self.transit_matrix, self.observation_matrix
         indice = self._get_seq_indice(indice, mode='observation', check_input=False)
+        n_states = self.n_states
 
         if t is None:
             forward_proba = self._cal_forward_proba(indice, None, check_input=False)
             back_proba = self._cal_backward_proba(indice, None, check_input=False)
 
-            r = np.empty((end, self.n_states, self.n_states))
+            r = np.empty((end, n_states, n_states))
             for i in xrange(end):
                 bi = B[:, indice[i+1]]
                 tmpi = forward_proba[:, i].dot(back_proba[:, i]) * A * bi
@@ -787,13 +845,8 @@ class HiddenMarkovModel(object):
         obs_seq = check_1d_array(obs_seq)
         indice = self._get_seq_indice(obs_seq, mode='observation', check_input=False)         
 
-        # check (A,B,pi)
+        self._check_probabilities()
         
         # foward algorithm
         forward_proba = self._cal_forward_proba(indice, check_input=False)
         return np.sum(forward_proba)
-
-
-
-
-
