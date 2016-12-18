@@ -1,12 +1,37 @@
+"""Hidden Markov Model
+
+This module contains methods for:
+- calculating some useful probabilities;
+- fitting Hidden Markov Model (HMM) w/ or w/o states provided;
+- generating observation sequence with model being fitted;
+- predicing state sequence with model being fitted.
+
+"""
+
+# Authors: Quan Yuan <yq911122@gmail.com>
+
 import warnings
 from warnings import warn
 
 import numpy as np
-from collections import defaultdict
 
 EPS = 1e-5
 
 def check_1d_array(y):
+    """
+    Check the array is of shape == (N, ) or (N, 1)
+
+    Parameters
+    ----------
+    y : array-like
+        array to be checked
+
+    Returns
+    -------
+    checked array: numpy array, shape = [N, ]. If the array
+        isn't of shape (N,) or (N,1), a ValueError will be raised.
+
+    """
     shape = np.shape(y)
     if len(shape) == 1:
         return np.ravel(y)
@@ -19,6 +44,20 @@ def check_1d_array(y):
     raise ValueError("bad input shape {0}".format(shape))
 
 def check_array(X):
+    """
+    Check the array is of shape == (N, M)
+
+    Parameters
+    ----------
+    y : array-like
+        array to be checked
+
+    Returns
+    -------
+    checked array: numpy array, shape = [N, M]. If the array
+        isn't of shape (N, M), a ValueError will be raised.
+
+    """
     shape = np.shape(X)
     if len(shape) == 2:
         return np.ravel(X)
@@ -26,20 +65,69 @@ def check_array(X):
     raise ValueError("bad input shape {0}".format(shape))
 
 def div0( a, b ):
-    """ ignore / 0, div0( [-1, 0, 1], 0 ) -> [0, 0, 0] """
+    """ divide two values, if denominator  is 0, return 0
+    
+    Parameters
+    ----------
+    a : array-like, shape = [N, ]
+        numerator 
+
+    b : array-like, shape = [N, ]
+        denominator 
+
+    Returns
+    -------
+    quotient: numpy array, shape = [N, ]. 
+        If denominator is 0, return 0
+    
+    """
     with np.errstate(divide='ignore', invalid='ignore'):
         c = np.true_divide( a, b )
         c[ ~ np.isfinite( c )] = 0  # -inf inf NaN
     return c
 
 def check_arrays(X1, X2):
+    """Check if two arrays are of the same shape
+    
+    Parameters
+    ----------
+    X1 : array-like
+
+    X2 : array-like
+
+    Returns
+    -------
+    A1, A2 : numpy.array, shape = X1.shape = X2.shape
+        if X1 and X2 are of the same shape, return them;
+        otherwise, a ValueError will be raised.
+    """
+
     if np.shape(X1) == np.shape(X2):
         return np.ravel(X1), np.ravel(X2)
 
     raise ValueError("inconsistent input shape {0} and {1}".format(np.shape(X1), np.shape(X2)))
 
 class TwoEndedIndex(object):
-    """docstring for TwoEndedIndex"""
+    """Helper class for storing index and reverse index
+    
+    Parameters
+    ----------
+    l : array-like, shape = [N,]
+        index key; each value is unique
+
+    Attributes
+    ----------
+    keydict: dict; index
+
+    valuedict: dict; reverse index
+
+    n: integer; size of index
+
+    keys: array-like; index keys
+
+    values: array-like; index values    
+
+    """
     def __init__(self, l):
         super(TwoEndedIndex, self).__init__()
         self.keydict = {k:i for i, k in enumerate(l)}
@@ -49,30 +137,107 @@ class TwoEndedIndex(object):
         self.values = range(n)
 
     def get_key(self, value):
+        """Return key by value; if no such key exists, return None
+
+        Parameters
+        ----------
+        value : integer; the value of which key will be returned
+        
+        Returns
+        -------
+        key: string; key of the value
+            if no such key exists, return None
+        """
         try:
             return self.valuedict[value]
         except KeyError:
             return None
 
     def get_value(self, key):
+        """Return value by key; if no such value exists, return -1
+
+        Parameters
+        ----------
+        key : string; the key of which value will be returned
+        
+        Returns
+        -------
+        value: integer; value of the key
+            if no such value exists, return -1
+        """
         try:
             return self.keydict[key]
         except KeyError:
             return -1
 
     def keys(self):
+        """
+        Returns
+        -------
+        keys: array-like; index keys
+        """
         return self.keys
 
     def values(self):
+        """
+        Returns
+        -------
+        values: array-like; index values
+        """
         return self.values
 
     def size(self):
+        """
+        Returns
+        -------
+        size: integer; index size
+        """
         return self.n
         
 
 class HiddenMarkovModel(object):
-    """docstring for HiddenMarkovModel"""
-    def __init__(self, max_iter_times=1000):
+    """A Hidden Markov Model
+    
+    Parameters
+    ----------
+    max_iters : integer, optional(default=1000)
+        the maximum iterations when fitting the model if
+        no states data provided. In that case, the model may 
+        not reach the maximum iterations and stop early, which
+        means the model converages. For more details, check fit()
+        method.
+
+    Attributes
+    ----------
+    transit_matrix : array-like, shape = [n_states, n_states]
+        probability transit matrix, with the (i, j) element as:
+
+            a(i,j) = P(i(t+1) = q(j) | i(t) = q(i))
+
+        q is the state sequence
+
+    observation_matrix : array-like, shape = [n_states, n_observations]
+        probability matrix of obesrvations, with the (i, j) element as:
+
+            b(i,j) = P(o(t) = v(j) | i(t) = q(i))
+
+        q, v are the state sequence and observation sequence
+
+    init_prob : array-like, shape = [n_states]    
+        initaite probability of states
+
+    n_states : integer; total number of unique states
+
+    n_observations : integer; total number of unique observations
+
+    states_space : object (TwoEndedIndex), storing states information
+
+    observations_space : object (TwoEndedIndex), storing observations information
+
+    max_iters : integer; the maximum iterations when fitting the model if
+        no states data provided
+    """
+    def __init__(self, max_iters=1000):
         super(HiddenMarkovModel, self).__init__()
         self.transit_matrix = None
         self.observation_matrix = None
@@ -81,15 +246,57 @@ class HiddenMarkovModel(object):
         self.n_observations = 0
         self.states_space = None
         self.observations_space = None
-        self.max_iter_times = max_iter_times
+        self.max_iters = max_iters
 
     def _normalize_by_column(A):
+        """normailize matrix by its column sum:
+
+                a(i, j) = a(i, j) / sum(a(:, j))
+
+        Parameters
+        ----------
+        A : array-like, shape = [M, N]
+            matrix to be normalized
+
+        Returns
+        -------
+        A_norm : array-like, shape = [M, N]
+            normalized matrix 
+        """
         return div0(A, np.sum(A, axis=1)[:, None])
 
     def _normalize_by_row(A):
+        """normailize matrix by its row sum:
+
+        a(i, j) = a(i, j) / sum(a(i, :))
+
+        Parameters
+        ----------
+        A : array-like, shape = [M, N]
+            matrix to be normalized
+
+        Returns
+        -------
+        A_norm : array-like, shape = [M, N]
+            normalized matrix 
+        """
         return div0(A, np.sum(A, axis=0))
 
     def set_params(self, **params):
+        """Set attributes of the model
+
+        Parameters
+        ----------
+        params : key-value pairs, with key as the name
+            of the attribute, value as the attribute value
+            to be set. If no such attribute exists, an
+            AttributeError will be raised, but the former 
+            valid attributes will be changed
+
+        Returns
+        -------
+        self : object; self will be returned
+        """
         if not params:
             return self
         for key, value in params.iteritems():
@@ -100,6 +307,38 @@ class HiddenMarkovModel(object):
         return self
 
     def _get_seq_indice(self, seq, mode='state', check_input=True, accept_invalid=False):
+        """map a sequence to related index values.
+
+        Parameters
+        ----------
+        seq : array-like, shape = [n_seq]
+            sequence to be mapped from
+
+        mode : string, optional(default = 'state')
+            if 'state', the sequence will be regarded
+            as a state sequence and mapped to state index
+            value;
+            if 'observation', the sequence will be regarded
+            as a observation sequence and mapped to observation 
+            index value;
+            otherwise, a ValueError will be raised.
+
+        check_input : boolean, optional(defaul='True')
+            determine whether to check if the sequence is of
+            valid shape
+
+        accept_invalid : boolean, optional(default="False")
+            determine whether to accept state/observation that
+            doesn't exist in the state/observation space. If set
+            True, the non-exist state/observation will be mapped
+            to -1
+
+        Returns
+        -------
+        indice : array-like, shape = [n_seq]
+            indice of the sequence
+        """
+
         if check_input:
             seq = check_1d_array(seq)
         seq_length = seq.shape[0]
@@ -120,11 +359,43 @@ class HiddenMarkovModel(object):
         return indice
 
     def _validate_period(self, t, end):
+        """check if the period is valid
+        
+        Parameters
+        ----------
+        t : integer; period to be checked
+
+        end : integer: the last acceptable period
+
+        Returns
+        -------
+        valid_t : integer; checked period. If the
+            period is not valid, a ValueError will
+            be raised
+        """
         if t < 0 or t > end:
             raise ValueError("invalid period {0}. The period should be in [{1}, {2}].".format(t, 0, end))
         return t
 
     def fit(self, obs, states=None):
+        """fit the model
+
+        Parameters
+        ----------
+        obs : array-like, shape = [n_seq]
+            observations sequence
+
+        states : array-like or None, optional(default=None),
+            states sequence;
+            if not None, shape = [n_seq], then a max-likelihood 
+            method will be applied to fitting;
+            if None, then Baum-Welch Algorithm will be applied to
+            fitting
+        
+        Returns
+        -------
+        self : object; self will be returned
+        """
         obs = check_1d_array(obs)
         T = obs.shape[0]
 
@@ -149,7 +420,7 @@ class HiddenMarkovModel(object):
             self.observation_matrix = B
             self.init_prob = pi
 
-            for _ in xrange(self.max_iter_times):
+            for _ in xrange(self.max_iters):
                 p_forward = self._cal_forward_proba(indice, None, check_input=False)
                 p_backward = self._cal_backward_proba(indice, None, check_input=False)
 
@@ -206,6 +477,18 @@ class HiddenMarkovModel(object):
 
 
     def predict(self, obs):
+        """predict states sequence of obs by Viterbi Algorithm
+
+        Parameters
+        ----------
+        obs : array-like, shape = [n_seq]
+            observations sequence
+
+        Returns
+        -------
+        states : array-like, shape = [n_seq]
+            predicted states sequence
+        """
         obs = check_1d_array(obs)
         # check (A, B, pi)
 
@@ -235,6 +518,18 @@ class HiddenMarkovModel(object):
         return np.vectorize(self.states_space.get_key)(pred_indice)
 
     def generate_observation_sequence(self, T):
+        """generate observations sequence
+        
+        Parameters
+        ----------
+        T : integer; length of observations sequence
+
+        Returns
+        -------
+        obs : array-like, shape = [T]
+            generated observations sequence
+        """
+
         # check (A, B, pi)
         if T < 0:
             raise ValueError("bad input sequence lenght {0}.".format(T))
@@ -248,6 +543,39 @@ class HiddenMarkovModel(object):
         return obs
 
     def _cal_forward_proba(self, indice, t=None, check_input=True):
+        """calculate forward probability based on the following recursing method:
+
+                a(0, i) = pi(i) * b(i, o(0))
+                a(t+1, i) = b(i, o(t+1)) * sum_j(a(t, j) * p(j, i)), t = 1, 2,..., T
+        
+            where a(t, i) is the calculated forward probability, that is,
+                
+                a(t, i) = P(o(1), o(2),..., o(t), i(t) = q(i))
+            
+            pi(i) is the initiate probability, o(t) is the observation in t, 
+            b(i, o) is the observation probability and p(j, i) the transit 
+            probability from state j to i
+
+        Parameters
+        ----------
+        indice : array-like, shape = [n_seq]
+            indice of observation sequence
+
+        t : integer or None, optional(default=None)
+            if None, forward probabilities at all period will be calculated;
+            otherwise, forward probability at period t will be calculated
+
+        check_input : boolean, optional(defaul='True')
+            determine whether to check if the sequence is of
+            valid shape
+
+        Returns
+        -------
+        forward_proba : array-like; forward probability
+            if t is None, shape = [n_states, n_seq]
+            otherwise, shape = [n_states]
+    
+        """
         if check_input:
             indice = check_1d_array(indice)
         end = indice.shape[0]
@@ -271,6 +599,39 @@ class HiddenMarkovModel(object):
 
 
     def _cal_backward_proba(self, indice, t=None, check_input=True):
+        """calculate backward probability based on the following recursing method:
+
+                a(T, i) = 1
+                a(t, i) = sum_j(b(j, o(t+1)) * a(t+1, j) * p(i, j)), t = 1, 2,..., T
+        
+            where a(t, i) is the calculated backward probability, that is,
+                
+                a(t, i) = P(o(t+1), o(t+2),..., o(T) | i(t) = q(i))
+            
+            pi(i) is the initiate probability, o(t) is the observation in t, 
+            b(i, o) is the observation probability and p(j, i) the transit 
+            probability from state j to i
+
+        Parameters
+        ----------
+        indice : array-like, shape = [n_seq]
+            indice of observation sequence
+
+        t : integer or None, optional(default=None)
+            if None, backward probabilities at all period will be calculated;
+            otherwise, backward probability at period t will be calculated
+
+        check_input : boolean, optional(defaul='True')
+            determine whether to check if the sequence is of
+            valid shape
+
+        Returns
+        -------
+        backward_proba : array-like; backward probability
+            if t is None, shape = [n_states, n_seq]
+            otherwise, shape = [n_states]
+    
+        """
         if check_input:
             indice = check_1d_array(indice)
         end = indice.shape[0]
@@ -293,6 +654,36 @@ class HiddenMarkovModel(object):
         return proba
 
     def cal_state_proba(self, indice, t=None, check_input=True):
+        """calculate state probability based on the following recursing method:
+
+                r(t, i) = a(t, i) * b(t, i) / sum_j(a(t, j) * b(t, j))
+        
+            where r(t, i) is the calculated state probability, that is,
+                
+                r(t, i) = P(i(t) = q(i) | O)
+            
+            a(t, i) and b(t, i) are forward and backward probability
+
+        Parameters
+        ----------
+        indice : array-like, shape = [n_seq]
+            indice of observation sequence
+
+        t : integer or None, optional(default=None)
+            if None, state probabilities at all period will be calculated;
+            otherwise, state probability at period t will be calculated
+
+        check_input : boolean, optional(defaul='True')
+            determine whether to check if the sequence is of
+            valid shape
+
+        Returns
+        -------
+        state_proba : array-like; state probability
+            if t is None, shape = [n_states, n_seq]
+            otherwise, shape = [n_states]
+    
+        """
         if check_input:
             indice = check_1d_array(indice)
         end = indice.shape[0]
@@ -311,6 +702,39 @@ class HiddenMarkovModel(object):
             return tmp / np.sum(tmp)
 
     def cal_trasit_proba(self, indice, t=None, check_input=True):
+        """calculate transit probability based on the following recursing method:
+
+                r(t, i, j) = a(t, i) * b(t, j) * p(i, j) * p2(j, o(t+1)) / 
+                            sum_i,j(a(t, i) * b(t, j) * p(i, j) * p2(j, o(t+1)))
+        
+            where r(t, i, j) is the calculated transit probability, that is,
+                
+                r(t, i, j) = P(i(t) = q(i), i(t+1) = q(j) | O)
+            
+            a(t, i) and b(t, i) are forward and backward probability, o(t) is the 
+            observation in t, p2(i, o) is the observation probability and p(j, i) 
+            the transit probability from state j to i
+
+        Parameters
+        ----------
+        indice : array-like, shape = [n_seq]
+            indice of observation sequence
+
+        t : integer or None, optional(default=None)
+            if None, transit probabilities at all period will be calculated;
+            otherwise, transit probability at period t will be calculated
+
+        check_input : boolean, optional(defaul='True')
+            determine whether to check if the sequence is of
+            valid shape
+
+        Returns
+        -------
+        transit_proba : array-like; transit probability
+            if t is None, shape = [n_seq, n_states, n_states]
+            otherwise, shape = [n_states, n_states]
+    
+        """
         if check_input:
             indice = check_1d_array(indice)
         end = indice.shape[0] - 1
@@ -340,6 +764,21 @@ class HiddenMarkovModel(object):
             return tmp / np.sum(tmp)
 
     def get_observation_sequence_proba(self, obs_seq):
+        """calculate probability P(O) of the given sequnce by:
+
+                P(O) = sum_i(a(T, i))
+
+            where T is the end period, a(t, i) is the forward probability
+
+        Parameters
+        ----------
+        obs_seq : array-like, shape = [n_seq]
+            observation sequence
+
+        Returns
+        -------
+        sequence_proba : float; probability of the given sequence
+        """
         obs_seq = check_1d_array(obs_seq)
         indice = self._get_seq_indice(obs_seq, mode='observation', check_input=False)         
 
