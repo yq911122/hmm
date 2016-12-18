@@ -134,7 +134,7 @@ class TwoEndedIndex(object):
         self.valuedict = {i:k for i, k in enumerate(l)}
         self.n = len(l)
         self.keys = l
-        self.values = range(n)
+        self.values = range(self.n)
 
     def get_key(self, value):
         """Return key by value; if no such key exists, return None
@@ -170,7 +170,7 @@ class TwoEndedIndex(object):
         except KeyError:
             return -1
 
-    def keys(self):
+    def all_keys(self):
         """
         Returns
         -------
@@ -178,7 +178,7 @@ class TwoEndedIndex(object):
         """
         return self.keys
 
-    def values(self):
+    def all_values(self):
         """
         Returns
         -------
@@ -248,7 +248,7 @@ class HiddenMarkovModel(object):
         self.observations_space = None
         self.max_iters = max_iters
 
-    def _normalize_by_column(A):
+    def _normalize_by_column(self, A):
         """normailize matrix by its column sum:
 
                 a(i, j) = a(i, j) / sum(a(:, j))
@@ -265,7 +265,7 @@ class HiddenMarkovModel(object):
         """
         return div0(A, np.sum(A, axis=1)[:, None])
 
-    def _normalize_by_row(A):
+    def _normalize_by_row(self, A):
         """normailize matrix by its row sum:
 
         a(i, j) = a(i, j) / sum(a(i, :))
@@ -404,13 +404,13 @@ class HiddenMarkovModel(object):
         self.n_observations = unique_obs.shape[0]
         
         if states is None:
-            if self.n_states == 0 or self.states is None:
+            if self.n_states == 0 or self.states_space is None:
                 raise ValueError("States must be specified if no states data provided.")
 
             indice = self._get_seq_indice(obs, mode='observation', check_input=False)
-            A = np.random.rand((self.n_states, self.n_states))
-            B = np.random.rand((self.n_states, self.n_observations))
-            pi = np.random.rand((self.n_states, ))
+            A = np.random.rand(self.n_states, self.n_states)
+            B = np.random.rand(self.n_states, self.n_observations)
+            pi = np.random.rand(self.n_states, )
 
             A = self._normalize_by_column(A)
             B = self._normalize_by_column(B)
@@ -455,8 +455,9 @@ class HiddenMarkovModel(object):
             states = check_1d_array(states)
             obs, states = check_arrays(obs, states)
 
-            unique_states, states_count, state_ids = np.unique(states, return_counts=True, return_inverse=True)
-            
+            unique_states, state_ids, states_count = np.unique(states, return_counts=True, return_inverse=True)
+            # print unique_states, states_count, state_ids
+
             self.init_prob = states_count / T
             self.states_space = TwoEndedIndex(unique_states)
             self.n_states = unique_states.shape[0]
@@ -465,6 +466,7 @@ class HiddenMarkovModel(object):
             for t in xrange(T-1):
                 i, j = state_ids[t], state_ids[t+1]
                 A[i, j] += 1
+            # print A
             self.transit_matrix = self._normalize_by_column(A)
 
             B = np.zeros((self.n_states, self.n_observations), dtype=np.int32)
@@ -497,18 +499,18 @@ class HiddenMarkovModel(object):
         indice = self._get_seq_indice(obs, mode='observation', accept_invalid=True)
         default_obs_prob = 1 / self.n_observations
 
-        pred_indice = np.empty((T, ))
+        pred_indice = np.empty((T, ), dtype=np.int32)
         
         delta = pi * default_obs_prob if indice[0] == -1 else pi * B[:, indice[0]]
-        phi = np.empty((T, self.n_states))
+        phi = np.empty((T, self.n_states), dtype=np.int32)
 
-        for i in xrange(1, T-1):
+        for i in xrange(1, T):
             o = indice[i]
             tmp = delta[:, None] * A
             phi[i-1] = np.argmax(tmp, axis=0)
             for j in xrange(self.n_states):
                 k = phi[i-1,j]
-                delta[j] = tmp[k,j] * B[k,o]
+                delta[j] = tmp[k, j] * B[j,o]
 
         pred_indice[T-1] = np.argmax(delta)
 
@@ -535,11 +537,14 @@ class HiddenMarkovModel(object):
             raise ValueError("bad input sequence lenght {0}.".format(T))
         
         A, B, pi = self.transit_matrix, self.observation_matrix, self.init_prob
-        obs = np.empty((T,))
-        i = np.random.choice(self.states_space.values(), 1, p=pi)
+        obs = np.empty((T,), dtype=np.string_)
+        i = np.random.choice(self.states_space.all_values(), 1, p=pi)[0]
         for t in xrange(T):
-            obs[t] = np.random.choice(self.observations_space.keys(), 1, p=B[:,i])
-            i = np.random.choice(self.states_space.values(), 1, p=A[i,:])
+            print self.observations_space.all_keys()
+            print i
+            print B[i].shape
+            obs[t] = np.random.choice(self.observations_space.all_keys(), 1, p=B[i])[0]
+            i = np.random.choice(self.states_space.all_values(), 1, p=A[i,:])[0]
         return obs
 
     def _cal_forward_proba(self, indice, t=None, check_input=True):
