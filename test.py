@@ -1,4 +1,4 @@
-from hmm import HiddenMarkovModel
+from hmm import HiddenMarkovModel, TwoEndedIndex
 import numpy as np
 
 clf = HiddenMarkovModel()
@@ -15,7 +15,9 @@ def test_initiation():
                   [0.4, 0.6],
                   [0.7, 0.3],
                  ])
-    clf.set_params(init_prob=pi, transit_matrix=A, observation_matrix=B, n_states=3, n_observations=2)
+    V = TwoEndedIndex(['b1','b2','b3'])
+    O = TwoEndedIndex(['red','white'])
+    clf.set_params(init_prob=pi, transit_matrix=A, observation_matrix=B, n_states=3, n_observations=2, states_space=V, observations_space=O)
     # print clf.init_prob
     # print clf.transit_matrix
     # print clf.observation_matrix
@@ -58,4 +60,22 @@ def test_trasit_proba():
     return clf.cal_trasit_proba(seq)
 
 
-print test_proba()
+def test_observations_sequence_generation():
+    clf = test_initiation()
+    return clf.generate_observation_sequence(5)
+
+def test_fit():
+    obs_seq = ['red','white','red']
+    state_seq = ['b1', 'b2',' b3']
+    V = TwoEndedIndex(['b1','b2','b3'])
+    clf.states_space = V
+    clf.n_states = 3
+    clf.fit(obs_seq)
+    return 
+
+def test_predict():
+    clf = test_initiation()
+    obs_seq = ['red','white','red']
+    return clf.predict(obs_seq)
+
+print test_predict()
