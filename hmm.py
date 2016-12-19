@@ -16,16 +16,17 @@ from warnings import warn
 import scipy.sparse as sp
 import numpy as np
 
+from _hmm import cal_forward_log_proba, cal_backward_log_proba
 from scipy.misc import logsumexp
 
 EPS = 1e-5
 
-def _logsumexp(X):
-    X_max = np.max(X)
-    if np.isinf(X_max):
-        return -np.inf
+# def _logsumexp(X):
+#     X_max = np.max(X)
+#     if np.isinf(X_max):
+#         return -np.inf
 
-    return np.log(np.sum(np.exp(X - X_max))) + X_max
+#     return np.log(np.sum(np.exp(X - X_max))) + X_max
 
 def log_mask_zero(a):
     """Computes the log of input probabilities masking divide by zero in log.
@@ -537,11 +538,9 @@ class HiddenMarkovModel(object):
 
             for i in xrange(self.max_iters):
                 A, B = log_mask_zero(A), log_mask_zero(B)
-                print i
+
                 p_forward = self._cal_forward_proba(indice, None, check_input=False)
                 p_backward = self._cal_backward_proba(indice, None, check_input=False)
-
-                # print p_forward[:, -1], p_backward[:, 0]
 
                 tmp = p_forward + p_backward
                 log_normalize(tmp, axis=0)
@@ -552,9 +551,7 @@ class HiddenMarkovModel(object):
                     tmp = p_forward[:, i] + p_backward[:, i+1].reshape((n_states, 1)) + A + B[:, indice[i+1]].reshape((n_states, 1))
                     log_normalize(tmp)
                     p_transit += np.exp(tmp)
-                # print p_transit[:5,:5]
-                # print np.sum(p_transit, axis=1)
-                # print np.sum(p_state[:, :-1], axis=1)
+
                 A = div0(p_transit, np.sum(p_state[:, :-1], axis=1)[:, None])
                 A = self._normalize_by_row(A)
                 # B = sp.csc_matrix((n_states, n_observations))
@@ -564,20 +561,15 @@ class HiddenMarkovModel(object):
                     B[:, j] += p_state[:, j]
 
                 B = self._normalize_by_row(B)
-                print np.sum(A, axis=1)
-
 
                 self.transit_matrix = A
                 self.observation_matrix = B
                 self.init_prob = p_state[:, 0]
 
-                # diff = np.sum((A - self.transit_matrix) ** 2) + \
-                #        np.sum((B - self.observation_matrix) ** 2) + \
-                #        np.sum((pi - self.init_prob) ** 2)
                 prob_seq1 = np.sum(np.exp(p_forward))
 
                 diff = np.sum((prob_seq2 - prob_seq1) ** 2)
-                print diff
+
                 if diff < EPS:
                     break
 
@@ -588,7 +580,6 @@ class HiddenMarkovModel(object):
             obs, states = check_arrays(obs, states)
 
             unique_states, state_ids, states_count = np.unique(states, return_counts=True, return_inverse=True)
-            # print unique_states, states_count, state_ids
 
             self.init_prob = states_count / float(T)
             self.states_space = TwoEndedIndex(unique_states)
@@ -598,7 +589,7 @@ class HiddenMarkovModel(object):
             for t in xrange(T-1):
                 i, j = state_ids[t], state_ids[t+1]
                 A[i, j] += 1
-            # print A
+
             self.transit_matrix = self._normalize_by_row(A)
 
             B = np.zeros((n_states, n_observations), dtype=np.int32)
@@ -628,7 +619,7 @@ class HiddenMarkovModel(object):
         self._check_probabilities()
 
         T = obs.shape[0]
-        # A, B, pi = self.transit_matrix, self.observation_matrix, self.init_prob
+
         A, B, pi = log_mask_zero(self.transit_matrix), log_mask_zero(self.observation_matrix), log_mask_zero(self.init_prob)
         indice = self._get_seq_indice(obs, mode='observation', accept_invalid=True)
         n_observations = self.n_observations
@@ -681,7 +672,7 @@ class HiddenMarkovModel(object):
             i = np.random.choice(self.states_space.all_values(), 1, p=A[i,:])[0]
         return obs
 
-    def _cal_forward_proba(self, indice, t=None, check_input=True):
+    def _cal_forward_proba(self, indice, check_input=True):
         """calculate forward probability based on the following recursing method:
 
                 a(0, i) = pi(i) * b(i, o(0))
@@ -700,19 +691,13 @@ class HiddenMarkovModel(object):
         indice : array-like, shape = [n_seq]
             indice of observation sequence
 
-        t : integer or None, optional(default=None)
-            if None, forward probabilities at all period will be calculated;
-            otherwise, forward probability at period t will be calculated
-
         check_input : boolean, optional(defaul='True')
             determine whether to check if the sequence is of
             valid shape
 
         Returns
         -------
-        forward_proba : array-like; forward probability
-            if t is None, shape = [n_states, n_seq]
-            otherwise, shape = [n_states]
+        forward_proba : array-like, shape = [n_states, n_seq]; forward probability
     
         """
         if check_input:
@@ -720,31 +705,15 @@ class HiddenMarkovModel(object):
         end = indice.shape[0]
         self._check_probabilities()
 
-        # A = self.transit_matrix
-        # B = self.observation_matrix
-        # pi = self.init_prob
-
         A, B, pi = log_mask_zero(self.transit_matrix), log_mask_zero(self.observation_matrix), log_mask_zero(self.init_prob)
         n_states = self.n_states
-        if t is None:
-            log_proba = np.empty((n_states, end))
-            log_proba[:,0] = pi + B[:,indice[0]]
-            for i in xrange(1, end):
-                M = log_proba[:,i-1].reshape((n_states, 1)) + A
-                N = np.empty((n_states,))
-                for j in xrange(n_states):
-                    N[j] = _logsumexp(M[:, j])
-                # print N[:5]
-                log_proba[:,i] = N + B[:, indice[i]]
-        else:
-            t = self._validate_period(t, end)
-            log_proba = pi + B[:,indice[0]]
-            for i in xrange(1, t):
-                log_proba = _logsumexp(log_proba + A) + B[:, indice[i]]
+        log_proba = np.empty((n_states, end))
+        tmp = np.empty((n_states, ))
+        cal_forward_log_proba(n_states, end, pi, A, B, log_proba, indice, tmp)
+
         return log_proba
 
-
-    def _cal_backward_proba(self, indice, t=None, check_input=True):
+    def _cal_backward_proba(self, indice, check_input=True):
         """calculate backward probability based on the following recursing method:
 
                 a(T, i) = 1
@@ -763,19 +732,13 @@ class HiddenMarkovModel(object):
         indice : array-like, shape = [n_seq]
             indice of observation sequence
 
-        t : integer or None, optional(default=None)
-            if None, backward probabilities at all period will be calculated;
-            otherwise, backward probability at period t will be calculated
-
         check_input : boolean, optional(defaul='True')
             determine whether to check if the sequence is of
             valid shape
 
         Returns
         -------
-        backward_proba : array-like; backward probability
-            if t is None, shape = [n_states, n_seq]
-            otherwise, shape = [n_states]
+        backward_proba : array-like, shape = [n_states, n_seq]; backward probability
     
         """
         if check_input:
@@ -790,20 +753,11 @@ class HiddenMarkovModel(object):
         A, B, pi = log_mask_zero(self.transit_matrix), log_mask_zero(self.observation_matrix), log_mask_zero(self.init_prob)
         n_states = self.n_states
 
-        if t is None:
-            log_proba = np.empty((self.n_states, end))
-            log_proba[:, end-1] = 0.
-            for i in xrange(end-2, -1, -1):
-                M = A + log_proba[:, i+1] + B[:, indice[i+1]]
-                N = np.empty((n_states,))
-                for j in xrange(n_states):
-                    N[j] = _logsumexp(M[j])
-                log_proba[:, i] = N
-        else:
-            t = self._validate_period(t, end)
-            log_proba = np.zeros((self.n_states, ))
-            for i in xrange(end-2, t-1, -1):
-                log_proba = _logsumexp(A + log_proba + B[:, indice[i+1]])
+        log_proba = np.empty((self.n_states, end))
+        log_proba[:, end-1] = 0.
+        tmp = np.empty((n_states, ))
+        cal_backward_log_proba(n_states, end, pi, A, B, log_proba, indice, tmp)
+
         return log_proba
 
     def cal_state_proba(self, indice, t=None, check_input=True):
@@ -840,19 +794,19 @@ class HiddenMarkovModel(object):
         if check_input:
             indice = check_1d_array(indice)
         end = indice.shape[0]
+
+        forward_proba = self._cal_forward_proba(indice, check_input=False)
+        back_proba = self._cal_backward_proba(indice, check_input=False)
+
         if t is None:
             # calculate proba for all times
-            forward_proba = self._cal_forward_proba(indice, None, check_input=False)
-            back_proba = self._cal_backward_proba(indice, None, check_input=False)
             tmp = forward_proba + back_proba
             log_normalize(tmp, axis=1)
             return np.exp(tmp)
         else:
             t = self._validate_period(end, end, t)
+            tmp = forward_proba[:,t] + back_proba[:, t]
 
-            forward_proba = self._cal_forward_proba(indice, t, check_input=False),
-            back_proba = self._cal_backward_proba(indice, t, check_input=False)
-            tmp = forward_proba + back_proba
             log_normalize(tmp, axis=0)
             return np.exp(tmp)
 
@@ -896,15 +850,15 @@ class HiddenMarkovModel(object):
         if end == 0:
             raise ValueError("Only 1 observation in the sequence. Insufficient data to estimate transit probability")
 
-        A, B = self.transit_matrix, self.observation_matrix
         A, B = log_mask_zero(self.transit_matrix), log_mask_zero(self.observation_matrix)
 
         indice = self._get_seq_indice(indice, mode='observation', check_input=False)
         n_states = self.n_states
 
+        forward_proba = self._cal_forward_proba(indice, None, check_input=False)
+        back_proba = self._cal_backward_proba(indice, None, check_input=False)
+
         if t is None:
-            forward_proba = self._cal_forward_proba(indice, None, check_input=False)
-            back_proba = self._cal_backward_proba(indice, None, check_input=False)
 
             r = np.empty((end, n_states, n_states))
             for i in xrange(end):
@@ -915,11 +869,8 @@ class HiddenMarkovModel(object):
             return r
         else:
             t = self._validate_period(end, end, t)
-            b = B[:, indice[t+1]]
 
-            forward_proba = self._cal_forward_proba(obs_seq, t, check_input=False),
-            back_proba = self._cal_backward_proba(obs_seq, t+1, check_input=False)
-            tmp = forward_proba + back_proba.reshape((n_states, 1)) + A + b
+            tmp = forward_proba[:, t] + back_proba[:, t+1].reshape((n_states, 1)) + A + B[:, indice[t+1]]
             log_normalize(tmp, axis=0)
             return np.exp(tmp)
 
