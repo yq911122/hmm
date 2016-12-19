@@ -17,7 +17,7 @@ def test_initiation():
                  ])
     V = TwoEndedIndex(['b1','b2','b3'])
     O = TwoEndedIndex(['red','white'])
-    clf.set_params(init_prob=pi, transit_matrix=A, observation_matrix=B, n_states=3, n_observations=2, states_space=V, observations_space=O)
+    clf.set_params(init_prob=pi, transit_matrix=A, observation_matrix=B, states_space=V, observations_space=O)
     # print clf.init_prob
     # print clf.transit_matrix
     # print clf.observation_matrix
@@ -69,7 +69,6 @@ def test_fit():
     state_seq = ['b1', 'b2',' b3']
     V = TwoEndedIndex(['b1','b2','b3'])
     clf.states_space = V
-    clf.n_states = 3
     clf.fit(obs_seq)
     return 
 
@@ -78,4 +77,32 @@ def test_predict():
     obs_seq = ['red','white','red']
     return clf.predict(obs_seq)
 
-print test_predict()
+
+def test_pos_tag():
+    import nltk
+    from nltk.data import load
+    # tagdict = load('help/tagsets/brown_tagset.pickle')
+    # tags = tagdict.keys()
+
+    words = nltk.corpus.brown.tagged_words(categories='news')[:10000]
+    obs = [v[0] for v in words]
+    states = [v[1] for v in words]
+    tags = set(states)
+    clf.set_params(states_space=TwoEndedIndex(tags))
+    clf.fit(obs)
+
+    # print clf.transit_matrix.shape
+    # print clf.init_prob
+    # print clf.observation_matrix.shape
+
+print test_pos_tag()
+
+
+# from scipy.sparse import coo_matrix, csc_matrix, isspmatrix_csc, isspmatrix, spdiags, isspmatrix_csr
+# data = B = np.array([
+#                   [0.5, 0.5],
+#                   [0.4, 0.6],
+#                   [0.7, 0.3],
+#                  ])
+# mat = csc_matrix(data)
+# print clf._normalize_by_row(mat)
